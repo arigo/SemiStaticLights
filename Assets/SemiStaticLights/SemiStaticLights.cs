@@ -449,6 +449,18 @@ public class SemiStaticLights : MonoBehaviour
             Matrix4x4.Inverse(_scale_for_cascade_matrix[cascade] * view_ray.world_to_light_local_matrix) *
             Matrix4x4.Scale(Vector3.one / gridResolution);
 
+        Vector3 v1 = view_ray.world_to_light_local_matrix.MultiplyVector(view_ray.world_forward);
+        v1 = v1.normalized;   /* should be a vector with two 0 and one +1/-1 component */
+        v1 = v1 * 0.5f * gridResolution;
+        Vector3 v2 = new Vector3(v1.y, v1.z, v1.x);
+        Vector3 v3 = new Vector3(v1.z, v1.x, v1.y);
+        Vector3 center = new Vector3(0.5f, 0.5f, 0.5f) * gridResolution;
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawLine(center - v1 + v2 + v3, center - v1 + v2 - v3);
+        Gizmos.DrawLine(center - v1 + v2 - v3, center - v1 - v2 - v3);
+        Gizmos.DrawLine(center - v1 - v2 - v3, center - v1 - v2 + v3);
+        Gizmos.DrawLine(center - v1 - v2 + v3, center - v1 + v2 + v3);
+
         var gizmos = new List<Tuple<Vector3, Color>>();
 
         /* Every texel in the LightingTower 3D texture is the color of light in a small cube,
