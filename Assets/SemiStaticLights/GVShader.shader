@@ -1,4 +1,4 @@
-﻿Shader "Hidden/LPVTest/GVShader" {
+﻿Shader "Hidden/SemiStaticLights/GVShader" {
     /*
        Geometry Volume shader
        ======================

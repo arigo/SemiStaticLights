@@ -15,6 +15,7 @@ public class SemiStaticLights : MonoBehaviour
 
     public Shader gvShader;
     public ComputeShader gvCompute;
+    public Shader directLightShader;
 
     public bool drawGizmosGV;
     public bool drawGizmosLT;
@@ -36,6 +37,7 @@ public class SemiStaticLights : MonoBehaviour
     Matrix4x4 _light_local_to_world_matrix;
     Vector3 _light_forward;
     RenderTexture[] _tex3d_gvs = Array.Empty<RenderTexture>();
+    Tuple<RenderTexture, RenderTexture>[] _tex3d_direct = Array.Empty<Tuple<RenderTexture, RenderTexture>>();
     ViewRay[] _view_rays = _InitViewRays();
 
     static ViewRay[] _InitViewRays()
@@ -93,6 +95,12 @@ public class SemiStaticLights : MonoBehaviour
                 view_ray.lighting_tower = CreateLightingTower();
         }
 
+        /* Render the direct light contribution.  This is a regular vertex+fragment shader
+         * combination with a depth map, which renders into two 2D textures, _target and _target2.
+         */
+        RenderDirectLight();
+
+
         /* Render the geometry voxels, the whole cascade.  This builds a cascade of 3D textures
          * with each voxel being just an 'R8'.  The value is between 0.0 (opaque voxel) and 1.0
          * (transparent voxel). */
@@ -113,6 +121,8 @@ public class SemiStaticLights : MonoBehaviour
             PropagateLight(2 * orientation);
         }
 
+        ReleaseDirectLight();
+
         /*ShowCascade(numCascades - 1, ray_index: 0);*/
     }
 
@@ -130,6 +140,51 @@ public class SemiStaticLights : MonoBehaviour
 
         Shader.SetGlobalTexture("_LPV_LightingTower", _view_rays[ray_index].lighting_tower);
     }*/
+
+    void RenderDirectLight()
+    {
+        var cam = FetchShadowCamera();
+
+        if (_tex3d_direct.Length != numCascades)
+            _tex3d_direct = new Tuple<RenderTexture, RenderTexture>[numCascades];
+
+        for (int i = 0; i < numCascades; i++)
+        {
+            var tg1 = RenderTexture.GetTemporary(gridResolution * 2, gridResolution * 2, 24,
+                                                 RenderTextureFormat.ARGBHalf);
+            tg1.wrapMode = TextureWrapMode.Clamp;
+            tg1.filterMode = FilterMode.Point;
+
+            var tg2 = RenderTexture.GetTemporary(gridResolution * 2, gridResolution * 2, 0,
+                                                 RenderTextureFormat.ARGB32);
+            tg2.wrapMode = TextureWrapMode.Clamp;
+            tg2.filterMode = FilterMode.Point;
+
+            _tex3d_direct[i] = Tuple.Create(tg1, tg2);
+
+            float pixel_size = gridPixelSize * Mathf.Pow(2f, i);
+            float half_size = 0.5f * gridResolution * pixel_size;
+            cam.orthographicSize = half_size;
+            cam.nearClipPlane = -127f * half_size;
+            cam.farClipPlane = half_size;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.SetTargetBuffers(new RenderBuffer[] { tg1.colorBuffer, tg2.colorBuffer },
+                                 tg1.depthBuffer);
+            cam.RenderWithShader(directLightShader, "RenderType");
+
+            //tg1.WriteToPNGFile("D:\\TG1_" + i + ".png");
+            //tg2.WriteToPNGFile("D:\\TG2_" + i + ".png");
+        }
+    }
+
+    void ReleaseDirectLight()
+    {
+        foreach (var rtt in _tex3d_direct)
+        {
+            RenderTexture.ReleaseTemporary(rtt.Item1);
+            RenderTexture.ReleaseTemporary(rtt.Item2);
+        }
+    }
 
     RenderTexture CreateTex3dGV()
     {
