@@ -207,13 +207,13 @@ public class SemiStaticLights : MonoBehaviour
             var axis_x = cam.transform.right;
             var axis_y = cam.transform.up;
             var axis_z = cam.transform.forward;
-            cam.transform.position -= 0.5f * pixel_size * (axis_x + axis_y);
+            //cam.transform.position -= 0.5f * pixel_size * (axis_x + axis_y + axis_z);
             cam.RenderWithShader(gvShader, "RenderType");
             cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
 
             cam.transform.Rotate(axis_y, -90, Space.World);
             cam.transform.Rotate(axis_z, -90, Space.World);
-            cam.transform.position -= 0.5f * pixel_size * (axis_z + axis_x);
+            //cam.transform.position -= 0.5f * pixel_size * (axis_z + axis_x + axis_y);
             Shader.EnableKeyword("ORIENTATION_2");
             cam.RenderWithShader(gvShader, "RenderType");
             Shader.DisableKeyword("ORIENTATION_2");
@@ -221,7 +221,7 @@ public class SemiStaticLights : MonoBehaviour
 
             cam.transform.Rotate(axis_z, 90, Space.World);
             cam.transform.Rotate(axis_y, 90, Space.World);
-            cam.transform.position -= 0.5f * pixel_size * (axis_y + axis_z);
+            //cam.transform.position -= 0.5f * pixel_size * (axis_y + axis_z + axis_x);
             Shader.EnableKeyword("ORIENTATION_3");
             cam.RenderWithShader(gvShader, "RenderType");
             Shader.DisableKeyword("ORIENTATION_3");
@@ -350,14 +350,18 @@ public class SemiStaticLights : MonoBehaviour
 #if UNITY_EDITOR
     void OnDrawGizmos()
     {
-        if (drawCascadeLevel < 0 || drawCascadeLevel >= numCascades)
-            return;
-
         if (drawGizmosGV)
-            DrawGizmosGV(_tex3d_gvs[drawCascadeLevel], _scale_for_cascade_matrix[drawCascadeLevel] * _world_to_light_local_matrix);
-
+        {
+            if (_tex3d_gvs != null && drawCascadeLevel >= 0 && drawCascadeLevel < _tex3d_gvs.Length &&
+                _scale_for_cascade_matrix != null && drawCascadeLevel < _scale_for_cascade_matrix.Length)
+                DrawGizmosGV(_tex3d_gvs[drawCascadeLevel], _scale_for_cascade_matrix[drawCascadeLevel] * _world_to_light_local_matrix);
+        }
         if (drawGizmosLT)
-            DrawGizmosLT(_view_rays[drawLightingViewRay], drawCascadeLevel);
+        {
+            if (drawLightingViewRay >= 0 && drawLightingViewRay < _view_rays.Length &&
+                _scale_for_cascade_matrix != null && drawCascadeLevel < _scale_for_cascade_matrix.Length)
+                DrawGizmosLT(_view_rays[drawLightingViewRay], drawCascadeLevel);
+        }
     }
 
     void DrawGizmosExtract(out float[] array, RenderTexture rt)
@@ -386,7 +390,7 @@ public class SemiStaticLights : MonoBehaviour
 
         var gizmos = new List<Tuple<Vector3, float>>();
 
-        const float dd = 0.0f;
+        const float dd = 0.5f;
         int index = 0;
         for (int z = 0; z < gridResolution; z++)
             for (int y = 0; y < gridResolution; y++)
@@ -447,7 +451,13 @@ public class SemiStaticLights : MonoBehaviour
 
         var gizmos = new List<Tuple<Vector3, Color>>();
 
-        const float dd = 0.0f;
+        /* Every texel in the LightingTower 3D texture is the color of light in a small cube,
+         * which is within the bounds of the camera projection.  In other words, if gridResolution
+         * is 16, then the cube shown by Unity for the camera (width*height*depth) is divided in
+         * 16*16*16 small cubic texels.  So when drawing the gozmos for a texel, we use
+         * gizmos.DrawCube() centered at an offset "integer + dd (=0.5)".
+         */
+        const float dd = 0.5f;
         int index = 0;
         for (int z = 0; z < gridResolution; z++)
             for (int y = 0; y < gridResolution; y++)
