@@ -48,6 +48,55 @@
             o.Alpha = c.a;
         }
         ENDCG
+
+
+
+//        Pass
+//        {
+//            CGPROGRAM
+//            #pragma target 5.0
+//            #include "UnityCG.cginc"
+//            #pragma vertex vert
+//            #pragma fragment frag
+//
+//            struct appdata
+//            {
+//                float4 vertex : POSITION;
+//            };
+//
+//            struct v2f
+//            {
+//                float4 vertex : SV_POSITION;
+//                float3 light_uvw : TEXCOORD0;
+//            };
+//
+//            sampler3D _LPV_LightingTower;
+//            float4 _LPV_ShowCascade;
+//            float4x4 _LPV_WorldToLightLocalMatrix;
+//
+//
+//            v2f vert(appdata v)
+//            {
+//                v2f o;
+//                o.vertex = UnityObjectToClipPos(v.vertex);
+//
+//                float4 world4 = mul(unity_ObjectToWorld, v.vertex);
+//                float4 lightlocal4 = mul(_LPV_WorldToLightLocalMatrix, world4);
+//                o.light_uvw = lightlocal4.xyz / lightlocal4.w;
+//
+//                return o;
+//            }
+//
+//            fixed4 frag(v2f i) : SV_Target
+//            {
+//                float3 light_uvw = i.light_uvw * _LPV_ShowCascade.xyz;
+//                light_uvw.z += _LPV_ShowCascade.w;
+//                float4 light_color = tex3D(_LPV_LightingTower, light_uvw);
+//                light_color.a = 1;
+//                return light_color;
+//            }
+//            ENDCG
+//        }
     }
     FallBack "Diffuse"
 }

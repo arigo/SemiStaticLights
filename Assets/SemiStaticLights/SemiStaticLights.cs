@@ -15,15 +15,36 @@ public class SemiStaticLights : MonoBehaviour
 
     public Shader gvShader;
     public ComputeShader gvCompute;
-    public bool drawGizmosGV;
-    public int drawGizmosLevelMin = 0;
-    public int drawGizmosLevelCount = 99;
 
+    public bool drawGizmosGV;
+    public bool drawGizmosLT;
+    public int drawCascadeLevel = 0;
+    public int drawLightingViewRay = 0;
+
+
+    class ViewRay
+    {
+        internal Vector3 world_forward;
+        internal Matrix4x4 world_to_light_local_matrix;
+        internal RenderTexture lighting_tower;    /* concatenation of 'numCascades' cubes along the Z axis */
+    }
 
     Vector3 _light_center;
     Camera _shadowCam;
-    Matrix4x4[] _world_to_light_local_matrix;
+    Matrix4x4 _world_to_light_local_matrix;
+    Matrix4x4[] _scale_for_cascade_matrix;
+    Matrix4x4 _light_local_to_world_matrix;
+    Vector3 _light_forward;
     RenderTexture[] _tex3d_gvs = Array.Empty<RenderTexture>();
+    ViewRay[] _view_rays = _InitViewRays();
+
+    static ViewRay[] _InitViewRays()
+    {
+        var result = new ViewRay[18];
+        for (int i = 0; i < result.Length; i++)
+            result[i] = new ViewRay();
+        return result;
+    }
 
 
     void DestroyTarget(ref RenderTexture tex)
@@ -37,6 +58,8 @@ public class SemiStaticLights : MonoBehaviour
     {
         for (int i = 0; i < _tex3d_gvs.Length; i++)
             DestroyTarget(ref _tex3d_gvs[i]);
+        foreach (var view_ray in _view_rays)
+            DestroyTarget(ref view_ray.lighting_tower);
     }
 
     private void OnDestroy()
@@ -59,12 +82,15 @@ public class SemiStaticLights : MonoBehaviour
         if (directionalLight == null || gridResolution <= 0 || gridPixelSize <= 0f || numCascades <= 0)
             return;
 
-        if (_tex3d_gvs.Length != numCascades || _tex3d_gvs[0].width != gridResolution)
+        if (_tex3d_gvs.Length != numCascades || _tex3d_gvs[0].width != gridResolution ||
+            _view_rays[0].lighting_tower == null || !_view_rays[0].lighting_tower.IsCreated())
         {
             DestroyTargets();
             _tex3d_gvs = new RenderTexture[numCascades];
             for (int i = 0; i < numCascades; i++)
                 _tex3d_gvs[i] = CreateTex3dGV();
+            foreach (var view_ray in _view_rays)
+                view_ray.lighting_tower = CreateLightingTower();
         }
 
         /* Render the geometry voxels, the whole cascade.  This builds a cascade of 3D textures
@@ -82,10 +108,28 @@ public class SemiStaticLights : MonoBehaviour
              * voxels in the fixed direction.  The final big voxel value is the mean of these
              * 4 intermediate values.
              */
-            //DirectionalCopyGV(orientation);
+            DirectionalCopyGV(orientation);
+
+            PropagateLight(2 * orientation);
         }
-        DirectionalCopyGV(2);
+
+        /*ShowCascade(numCascades - 1, ray_index: 0);*/
     }
+
+    /*void ShowCascade(int cascade, int ray_index)
+    {
+        Vector4 show_cascade;
+        show_cascade.x = Mathf.Pow(0.5f, cascade);
+        show_cascade.y = Mathf.Pow(0.5f, cascade);
+        show_cascade.z = Mathf.Pow(0.5f, cascade) / numCascades;
+        show_cascade.w = cascade / (float)numCascades;
+        Shader.SetGlobalVector("_LPV_ShowCascade", show_cascade);
+
+        var mat = _world_to_light_local_matrix[0];
+        Shader.SetGlobalMatrix("_LPV_WorldToLightLocalMatrix", mat);
+
+        Shader.SetGlobalTexture("_LPV_LightingTower", _view_rays[ray_index].lighting_tower);
+    }*/
 
     RenderTexture CreateTex3dGV()
     {
@@ -102,20 +146,37 @@ public class SemiStaticLights : MonoBehaviour
         return tg;
     }
 
+    RenderTexture CreateLightingTower()
+    {
+        var desc = new RenderTextureDescriptor(gridResolution, gridResolution, RenderTextureFormat.ARGB32);
+        desc.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+        desc.volumeDepth = gridResolution * numCascades;
+        desc.enableRandomWrite = true;
+        desc.useMipMap = false;
+        desc.autoGenerateMips = false;
+
+        RenderTexture tg = new RenderTexture(desc);
+        tg.wrapMode = TextureWrapMode.Clamp;
+        tg.filterMode = FilterMode.Bilinear;
+        return tg;
+    }
+
     void RenderGV()
     {
         var cam = FetchShadowCamera();
 
-        _world_to_light_local_matrix = new Matrix4x4[_tex3d_gvs.Length];
+        _world_to_light_local_matrix = cam.transform.worldToLocalMatrix;
+        _scale_for_cascade_matrix = new Matrix4x4[numCascades];
 
-        for (int i = 0; i < _tex3d_gvs.Length; i++)
+        for (int i = 0; i < numCascades; i++)
         {
             float pixel_size = gridPixelSize * Mathf.Pow(2f, i);
             float half_size = 0.5f * gridResolution * pixel_size;
+
             var mat = Matrix4x4.Scale(Vector3.one / (2f * half_size)) *
-                      Matrix4x4.Translate(Vector3.one * half_size) *
-                      cam.transform.worldToLocalMatrix;
-            _world_to_light_local_matrix[i] = mat;
+                      Matrix4x4.Translate(Vector3.one * half_size);
+            _scale_for_cascade_matrix[i] = mat;
+            mat *= _world_to_light_local_matrix;
 
             /* Render into the GV (geometry volume).  Here, there is no depth map
              * and the fragment shader writes into the ComputeBuffer cb_gv.  At the end we
@@ -177,6 +238,7 @@ public class SemiStaticLights : MonoBehaviour
             gvCompute.Dispatch(pack_kernel, thread_groups, thread_groups, thread_groups);
             cb_gv.Release();
         }
+        _light_local_to_world_matrix = Matrix4x4.Inverse(_world_to_light_local_matrix);
     }
 
     void DirectionalCopyGV(int orientation)
@@ -190,17 +252,68 @@ public class SemiStaticLights : MonoBehaviour
         DX[(orientation + 1) % 3] = 1f;
         DY[(orientation + 2) % 3] = 1f;
 
+        _light_forward = (_light_local_to_world_matrix * DZ).normalized;
+
         int directional_copy_kernel = gvCompute.FindKernel("DirectionalCopy");
         gvCompute.SetInts("DX", (int)DX.x, (int)DX.y, (int)DX.z);
         gvCompute.SetInts("DY", (int)DY.x, (int)DY.y, (int)DY.z);
         gvCompute.SetInts("DZ", (int)DZ.x, (int)DZ.y, (int)DZ.z);
 
-        for (int i = 1; i < _tex3d_gvs.Length; i++)
+        for (int i = 1; i < numCascades; i++)
         {
             gvCompute.SetTexture(directional_copy_kernel, "Input_gv", _tex3d_gvs[i - 1]);
             gvCompute.SetTexture(directional_copy_kernel, "LPV_gv", _tex3d_gvs[i]);
             int thread_groups = (gridResolution + 7) / 8;
             gvCompute.Dispatch(directional_copy_kernel, thread_groups, thread_groups, thread_groups);
+        }
+    }
+
+    void SetAmbientProbe()
+    {
+        Color[] results = new Color[2];
+        RenderSettings.ambientProbe.Evaluate(new Vector3[] { -_light_forward, _light_forward }, results);
+        gvCompute.SetVector("AmbientForward", results[0]);
+        gvCompute.SetVector("AmbientBackward", results[1]);
+    }
+
+    void PropagateLight(int ray_index)
+    {
+        /* 'ray_index' is an index into the _view_rays array.
+         * This computes and fills both _view_rays[ray_index] and _view_rays[ray_index + 1]
+         * along the "_light_forward" and "-_light_forward" directions.
+         */
+        Debug.Assert((ray_index & 1) == 0);
+        _view_rays[ray_index].world_forward = _light_forward;
+        _view_rays[ray_index].world_to_light_local_matrix = _world_to_light_local_matrix;
+        _view_rays[ray_index].lighting_tower.Create();
+        _view_rays[ray_index + 1].world_forward = -_light_forward;
+        _view_rays[ray_index + 1].world_to_light_local_matrix = _world_to_light_local_matrix;
+        _view_rays[ray_index + 1].lighting_tower.Create();
+
+        SetAmbientProbe();
+
+        int thread_groups = (gridResolution + 3) / 4;
+        int propagate_kernel = gvCompute.FindKernel("PropagateFromAmbient");
+        gvCompute.SetTexture(propagate_kernel, "Input_gv", _tex3d_gvs[numCascades - 1]);
+        gvCompute.SetTexture(propagate_kernel, "LightingTowerForward", _view_rays[ray_index].lighting_tower);
+        gvCompute.SetTexture(propagate_kernel, "LightingTowerBackward", _view_rays[ray_index + 1].lighting_tower);
+        gvCompute.SetInts("CascadeZIndex", -1, -1, -1, (numCascades - 1) * gridResolution);
+        gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
+
+        propagate_kernel = gvCompute.FindKernel("PropagateFromUpperLevel");
+        gvCompute.SetTexture(propagate_kernel, "LightingTowerForward", _view_rays[ray_index].lighting_tower);
+        gvCompute.SetTexture(propagate_kernel, "LightingTowerBackward", _view_rays[ray_index + 1].lighting_tower);
+
+        for (int i = numCascades - 2; i >= 0; --i)
+        {
+            gvCompute.SetTexture(propagate_kernel, "Input_gv", _tex3d_gvs[i]);
+            gvCompute.SetTexture(propagate_kernel, "UpperLevelInput_gv", _tex3d_gvs[i + 1]);
+            gvCompute.SetInts("CascadeZIndex",
+                (gridResolution >> 2) << 1,
+                (gridResolution >> 2) << 1,
+                ((gridResolution >> 2) + (i + 1) * gridResolution) << 1,
+                i * gridResolution);
+            gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
         }
     }
 
@@ -237,17 +350,14 @@ public class SemiStaticLights : MonoBehaviour
 #if UNITY_EDITOR
     void OnDrawGizmos()
     {
+        if (drawCascadeLevel < 0 || drawCascadeLevel >= numCascades)
+            return;
+
         if (drawGizmosGV)
-        {
-            for (int i = 0; i < _tex3d_gvs.Length; i++)
-            {
-                if (i < drawGizmosLevelMin)
-                    continue;
-                if (i >= drawGizmosLevelMin + drawGizmosLevelCount)
-                    continue;
-                DrawGizmosGV(_tex3d_gvs[i], _world_to_light_local_matrix[i]);
-            }
-        }
+            DrawGizmosGV(_tex3d_gvs[drawCascadeLevel], _scale_for_cascade_matrix[drawCascadeLevel] * _world_to_light_local_matrix);
+
+        if (drawGizmosLT)
+            DrawGizmosLT(_view_rays[drawLightingViewRay], drawCascadeLevel);
     }
 
     void DrawGizmosExtract(out float[] array, RenderTexture rt)
@@ -257,6 +367,7 @@ public class SemiStaticLights : MonoBehaviour
         gvCompute.SetBuffer(unpack_kernel, "RSM_gv", buffer);
         gvCompute.SetTexture(unpack_kernel, "LPV_gv", rt);
         gvCompute.SetInt("GridResolution", gridResolution);
+
         int thread_groups = (gridResolution + 3) / 4;
         gvCompute.Dispatch(unpack_kernel, thread_groups, thread_groups, thread_groups);
 
@@ -303,6 +414,64 @@ public class SemiStaticLights : MonoBehaviour
         {
             float size = (1f - g.Item2) * 0.5f;
             Gizmos.DrawCube(g.Item1, Vector3.one * size);
+        }
+    }
+
+    void DrawGizmosExtractLT(out float[] array, RenderTexture rt, int zoffset)
+    {
+        var buffer = new ComputeBuffer(gridResolution * gridResolution * gridResolution * 3, 4, ComputeBufferType.Default);
+        int unpack_kernel = gvCompute.FindKernel("UnpackFromLightingTower");
+        gvCompute.SetBuffer(unpack_kernel, "RSM_gv", buffer);
+        gvCompute.SetTexture(unpack_kernel, "LightingTowerForward", rt);
+        gvCompute.SetInt("GridResolution", gridResolution);
+        gvCompute.SetInts("CascadeZIndex", 0, 0, zoffset, 0);
+
+        int thread_groups = (gridResolution + 3) / 4;
+        gvCompute.Dispatch(unpack_kernel, thread_groups, thread_groups, thread_groups);
+
+        array = new float[gridResolution * gridResolution * gridResolution * 3];
+        buffer.GetData(array);
+        buffer.Release();
+    }
+
+    void DrawGizmosLT(ViewRay view_ray, int cascade)
+    {
+        var rt = view_ray.lighting_tower;
+        if (rt == null || !rt.IsCreated())
+            return;
+        DrawGizmosExtractLT(out var array, rt, cascade * gridResolution);
+
+        Gizmos.matrix =
+            Matrix4x4.Inverse(_scale_for_cascade_matrix[cascade] * view_ray.world_to_light_local_matrix) *
+            Matrix4x4.Scale(Vector3.one / gridResolution);
+
+        var gizmos = new List<Tuple<Vector3, Color>>();
+
+        const float dd = 0.0f;
+        int index = 0;
+        for (int z = 0; z < gridResolution; z++)
+            for (int y = 0; y < gridResolution; y++)
+                for (int x = 0; x < gridResolution; x++)
+                {
+                    var color = new Color(array[index], array[index + 1], array[index + 2], 1f);
+                    index += 3;
+                    gizmos.Add(System.Tuple.Create(
+                        new Vector3(x + dd, y + dd, z + dd),
+                        color));
+                }
+
+        var camera_fwd = UnityEditor.SceneView.lastActiveSceneView.camera.transform.forward;
+        camera_fwd = Matrix4x4.Inverse(Gizmos.matrix).MultiplyVector(camera_fwd);
+        gizmos.Sort((g1, g2) =>
+        {
+            var d1 = Vector3.Dot(camera_fwd, g1.Item1);
+            var d2 = Vector3.Dot(camera_fwd, g2.Item1);
+            return d2.CompareTo(d1);
+        });
+        foreach (var g in gizmos)
+        {
+            Gizmos.color = g.Item2 * 1.8f;
+            Gizmos.DrawCube(g.Item1, Vector3.one * 0.2f);
         }
     }
 #endif
