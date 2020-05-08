@@ -1,0 +1,57 @@
+﻿#pragma kernel SetToOnes
+#pragma kernel PackToTexture
+#pragma kernel UnpackFromTexture
+#pragma kernel DirectionalCopy
+
+/**********************************************************************************/
+
+
+RWStructuredBuffer<float> RSM_gv;
+RWTexture3D<float> LPV_gv;
+Texture3D<float> Input_gv;
+uint GridResolution;
+
+
+[numthreads(64, 1, 1)]
+void SetToOnes(uint3 id : SV_DispatchThreadID)
+{
+    RSM_gv[id.x] = 1.0;
+}
+
+[numthreads(4, 4, 4)]
+void PackToTexture(uint3 id : SV_DispatchThreadID)
+{
+    uint src_index = (id.z * GridResolution + id.y) * GridResolution + id.x;
+    LPV_gv[id] = RSM_gv[src_index];
+}
+
+[numthreads(4, 4, 4)]
+void UnpackFromTexture(uint3 id : SV_DispatchThreadID)
+{
+    uint dst_index = (id.z * GridResolution + id.y) * GridResolution + id.x;
+    RSM_gv[dst_index] = LPV_gv[id];
+}
+
+uint3 DX, DY, DZ;
+
+[numthreads(4, 4, 4)]
+void DirectionalCopy(uint3 id : SV_DispatchThreadID)
+{
+    uint3 dst_id = id + (GridResolution >> 2);
+    uint3 input_id = id * 2;
+
+    float4 transparency1 = float4(
+        Input_gv[input_id],
+        Input_gv[input_id + DX],
+        Input_gv[input_id + DY],
+        Input_gv[input_id + DX + DY]);
+
+    input_id += DZ;
+    float4 transparency2 = float4(
+        Input_gv[input_id],
+        Input_gv[input_id + DX],
+        Input_gv[input_id + DY],
+        Input_gv[input_id + DX + DY]);
+
+    LPV_gv[dst_id] = dot(transparency1, transparency2) * 0.25;
+}

@@ -1,0 +1,10 @@
+/Library
+/Logs
+/Packages
+/Temp
+/.vs
+/Assembly-CSharp*.csproj
+/*.sln
+/obj
+/Assets/Ignored
+/Assets/Ignored.meta
