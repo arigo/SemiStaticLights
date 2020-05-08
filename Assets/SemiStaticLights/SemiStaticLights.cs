@@ -309,9 +309,9 @@ public class SemiStaticLights : MonoBehaviour
             gvCompute.SetTexture(propagate_kernel, "Input_gv", _tex3d_gvs[i]);
             gvCompute.SetTexture(propagate_kernel, "UpperLevelInput_gv", _tex3d_gvs[i + 1]);
             gvCompute.SetInts("CascadeZIndex",
-                (gridResolution >> 2) << 1,
-                (gridResolution >> 2) << 1,
-                ((gridResolution >> 2) + (i + 1) * gridResolution) << 1,
+                (gridResolution >> 2),
+                (gridResolution >> 2),
+                (gridResolution >> 2) + (i + 1) * gridResolution,
                 i * gridResolution);
             gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
         }
