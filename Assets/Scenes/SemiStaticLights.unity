@@ -158,9 +158,10 @@ MonoBehaviour:
   numCascades: 5
   gvShader: {fileID: 4800000, guid: afebd8fbdfed26e4a9fcd86807a18b5f, type: 3}
   gvCompute: {fileID: 7200000, guid: 296ca61ad6c590342a55bbb5406b118e, type: 3}
-  drawGizmosGV: 1
-  drawGizmosLT: 1
-  drawCascadeLevel: 1
+  directLightShader: {fileID: 4800000, guid: ba83b898e207e5a4580f903fc9e533fa, type: 3}
+  drawGizmosGV: 0
+  drawGizmosLT: 0
+  drawCascadeLevel: 3
   drawLightingViewRay: 4
 --- !u!4 &902605891
 Transform:

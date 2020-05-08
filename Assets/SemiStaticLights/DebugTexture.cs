@@ -5,9 +5,11 @@ using UnityEngine;
 
 public static class DebugTexture
 {
-    static Texture2D CopyTexture(RenderTexture source)
+    static Texture2D CopyTexture(RenderTexture source, bool with_alpha)
     {
-        var tex = new Texture2D(source.width, source.height, TextureFormat.RGB24, false);
+        var tex = new Texture2D(source.width, source.height,
+                                with_alpha ? TextureFormat.ARGB32 : TextureFormat.RGB24,
+                                false);
 
         var saved = RenderTexture.active;
         RenderTexture.active = source;
@@ -34,11 +36,11 @@ public static class DebugTexture
         }
     }
 
-    public static bool WriteToPNGFile(this RenderTexture source, string filename)
+    public static bool WriteToPNGFile(this RenderTexture source, string filename, bool with_alpha = false)
     {
         try
         {
-            Texture2D tex = CopyTexture(source);
+            Texture2D tex = CopyTexture(source, with_alpha);
             try
             {
                 return tex.WriteToPNGFile(filename);
