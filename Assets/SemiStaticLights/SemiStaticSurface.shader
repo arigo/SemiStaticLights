@@ -12,42 +12,42 @@
         Tags { "RenderType"="Opaque" }
         LOD 200
 
-        CGPROGRAM
-        // Physically based Standard lighting model, and enable shadows on all light types
-        #pragma surface surf Standard fullforwardshadows
-
-        // Use shader model 3.0 target, to get nicer looking lighting
-        #pragma target 3.0
-
-        sampler2D _MainTex;
-
-        struct Input
-        {
-            float2 uv_MainTex;
-        };
-
-        half _Glossiness;
-        half _Metallic;
-        fixed4 _Color;
-
-        // Add instancing support for this shader. You need to check 'Enable Instancing' on materials that use the shader.
-        // See https://docs.unity3d.com/Manual/GPUInstancing.html for more information about instancing.
-        // #pragma instancing_options assumeuniformscaling
-        UNITY_INSTANCING_BUFFER_START(Props)
-            // put more per-instance properties here
-        UNITY_INSTANCING_BUFFER_END(Props)
-
-        void surf (Input IN, inout SurfaceOutputStandard o)
-        {
-            // Albedo comes from a texture tinted by color
-            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-            o.Albedo = c.rgb;
-            // Metallic and smoothness come from slider variables
-            o.Metallic = _Metallic;
-            o.Smoothness = _Glossiness;
-            o.Alpha = c.a;
-        }
-        ENDCG
+//        CGPROGRAM
+//        // Physically based Standard lighting model, and enable shadows on all light types
+//        #pragma surface surf Standard fullforwardshadows
+//
+//        // Use shader model 3.0 target, to get nicer looking lighting
+//        #pragma target 3.0
+//
+//        sampler2D _MainTex;
+//
+//        struct Input
+//        {
+//            float2 uv_MainTex;
+//        };
+//
+//        half _Glossiness;
+//        half _Metallic;
+//        fixed4 _Color;
+//
+//        // Add instancing support for this shader. You need to check 'Enable Instancing' on materials that use the shader.
+//        // See https://docs.unity3d.com/Manual/GPUInstancing.html for more information about instancing.
+//        // #pragma instancing_options assumeuniformscaling
+//        UNITY_INSTANCING_BUFFER_START(Props)
+//            // put more per-instance properties here
+//        UNITY_INSTANCING_BUFFER_END(Props)
+//
+//        void surf (Input IN, inout SurfaceOutputStandard o)
+//        {
+//            // Albedo comes from a texture tinted by color
+//            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
+//            o.Albedo = c.rgb;
+//            // Metallic and smoothness come from slider variables
+//            o.Metallic = _Metallic;
+//            o.Smoothness = _Glossiness;
+//            o.Alpha = c.a;
+//        }
+//        ENDCG
 
 
 
@@ -97,6 +97,89 @@
 //            }
 //            ENDCG
 //        }
+
+        Pass
+        {
+            CGPROGRAM
+            #pragma target 5.0
+            #include "UnityCG.cginc"
+            #pragma vertex vert
+            #pragma fragment frag
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f
+            {
+                float4 vertex : SV_POSITION;
+                float3 world_normal : TEXCOORD0;
+                float3 light_uvw : TEXCOORD1;
+            };
+
+            float4x4 _LPV_WorldToLightLocalMatrix;
+            sampler3D _SSL_FinalSH_r;
+            sampler3D _SSL_FinalSH_g;
+            sampler3D _SSL_FinalSH_b;
+            float2 _SSL_CascadeStuff;
+
+            v2f vert(appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+
+                float4 world4 = mul(unity_ObjectToWorld, v.vertex);
+                float4 lightlocal4 = mul(_LPV_WorldToLightLocalMatrix, world4);
+                o.light_uvw = lightlocal4.xyz / lightlocal4.w;
+
+                o.world_normal = normalize(mul((float3x3)unity_ObjectToWorld, v.normal));
+
+                return o;
+            }
+
+            float4 compute_ylm(float3 direction)
+            {
+                const float PI = 3.141592653589793;
+                const float _Y0 = 0.5 * sqrt(1.0 / PI);
+                const float _Y1 = 0.5 * sqrt(3.0 / PI);
+                return float4(_Y0, _Y1 * direction.yzx);
+            }
+
+            fixed4 frag(v2f i) : SV_Target
+            {
+                float4 ylm = compute_ylm(i.world_normal);
+
+                /* 'uvw' is three coordinates between -0.5 and 0.5 if we're inside the level-0
+                   cascade.  The value of _SSL_CascadeStuff.x is computed by the C# code. */
+                float3 uvw = i.light_uvw;
+
+                float3 uvw_abs = abs(uvw);
+                float magnitude = max(max(uvw_abs.x, uvw_abs.y), uvw_abs.z);
+                float cascade = floor(log2(max(magnitude * _SSL_CascadeStuff.x, 1)));
+                /* ^^^ an integer at least 0 */
+                float inv_cascade_scale = exp2(-cascade);
+                uvw *= inv_cascade_scale;
+
+
+                //float3 light_normal = mul((float3x3)_LPV_WorldToLightLocalMatrix, i.world_normal);
+                //uvw += normalize(light_normal) / 16;
+
+
+                uvw += float3(0.5, 0.5, 0.5 + cascade);
+                uvw.z *= _SSL_CascadeStuff.y;   /* 1 / numCascades */
+
+                float4 sh_r = tex3D(_SSL_FinalSH_r, uvw);
+                float4 sh_g = tex3D(_SSL_FinalSH_g, uvw);
+                float4 sh_b = tex3D(_SSL_FinalSH_b, uvw);
+
+                float3 light_color = float3(dot(sh_r, ylm), dot(sh_g, ylm), dot(sh_b, ylm));
+                light_color *= 3;
+                return float4(light_color, 1);
+            }
+            ENDCG
+        }
     }
     FallBack "Diffuse"
 }

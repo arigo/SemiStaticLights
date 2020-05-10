@@ -30,6 +30,13 @@ public class SemiStaticLights : MonoBehaviour
         internal RenderTexture lighting_tower;    /* concatenation of 'numCascades' cubes along the Z axis */
     }
 
+    struct ShRGB
+    {
+        internal RenderTexture r, g, b;
+        internal void Create() { r.Create(); g.Create(); b.Create(); }
+        internal void Release() { r.Release(); g.Release(); b.Release(); }
+    }
+
     Vector3 _light_center;
     Camera _shadowCam;
     Matrix4x4 _world_to_light_local_matrix;
@@ -38,6 +45,7 @@ public class SemiStaticLights : MonoBehaviour
     Vector3 _light_forward;
     RenderTexture[] _tex3d_gvs = Array.Empty<RenderTexture>();
     Tuple<RenderTexture, RenderTexture>[] _tex3d_direct = Array.Empty<Tuple<RenderTexture, RenderTexture>>();
+    ShRGB _tex3d_sh;    /* concatenation of 'numCascades' along the Z axis */
     ViewRay[] _view_rays = _InitViewRays();
 
     static ViewRay[] _InitViewRays()
@@ -56,12 +64,20 @@ public class SemiStaticLights : MonoBehaviour
         tex = null;
     }
 
+    void DestroyTarget(ref ShRGB sh)
+    {
+        DestroyTarget(ref sh.r);
+        DestroyTarget(ref sh.g);
+        DestroyTarget(ref sh.b);
+    }
+
     void DestroyTargets()
     {
         for (int i = 0; i < _tex3d_gvs.Length; i++)
             DestroyTarget(ref _tex3d_gvs[i]);
         foreach (var view_ray in _view_rays)
             DestroyTarget(ref view_ray.lighting_tower);
+        DestroyTarget(ref _tex3d_sh);
     }
 
     private void OnDestroy()
@@ -85,21 +101,25 @@ public class SemiStaticLights : MonoBehaviour
             return;
 
         if (_tex3d_gvs.Length != numCascades || _tex3d_gvs[0].width != gridResolution ||
-            _view_rays[0].lighting_tower == null || !_view_rays[0].lighting_tower.IsCreated())
+            _view_rays[0].lighting_tower == null || !_view_rays[0].lighting_tower.IsCreated() ||
+            _tex3d_sh.r == null || !_tex3d_sh.r.IsCreated())
         {
             DestroyTargets();
+
             _tex3d_gvs = new RenderTexture[numCascades];
             for (int i = 0; i < numCascades; i++)
                 _tex3d_gvs[i] = CreateTex3dGV();
+
             foreach (var view_ray in _view_rays)
                 view_ray.lighting_tower = CreateLightingTower();
+
+            _tex3d_sh = CreateTex3dSH();
         }
 
         /* Render the direct light contribution.  This is a regular vertex+fragment shader
          * combination with a depth map, which renders into two 2D textures, _target and _target2.
          */
-        RenderDirectLight();
-
+        //RenderDirectLight();
 
         /* Render the geometry voxels, the whole cascade.  This builds a cascade of 3D textures
          * with each voxel being just an 'R8'.  The value is between 0.0 (opaque voxel) and 1.0
@@ -121,7 +141,12 @@ public class SemiStaticLights : MonoBehaviour
             PropagateLight(2 * orientation);
         }
 
-        ReleaseDirectLight();
+        //ReleaseDirectLight();
+
+        /* Encodes the result of the light propagation done above into simple spherical harmonic
+         * coefficients, instead of one separate color for each of the _view_rays */
+        EncodeResultIntoSH();
+
 
         /*ShowCascade(numCascades - 1, ray_index: 0);*/
     }
@@ -214,6 +239,21 @@ public class SemiStaticLights : MonoBehaviour
         tg.wrapMode = TextureWrapMode.Clamp;
         tg.filterMode = FilterMode.Bilinear;
         return tg;
+    }
+
+    ShRGB CreateTex3dSH()
+    {
+        var desc = new RenderTextureDescriptor(gridResolution, gridResolution, RenderTextureFormat.ARGBHalf);
+        desc.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+        desc.volumeDepth = gridResolution * numCascades;
+        desc.enableRandomWrite = true;
+        desc.useMipMap = false;
+        desc.autoGenerateMips = false;
+
+        var r = new RenderTexture(desc) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var g = new RenderTexture(desc) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        var b = new RenderTexture(desc) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        return new ShRGB { r = r, g = g, b = b };
     }
 
     void RenderGV()
@@ -335,7 +375,7 @@ public class SemiStaticLights : MonoBehaviour
     {
         /* 'ray_index' is an index into the _view_rays array.
          * This computes and fills both _view_rays[ray_index] and _view_rays[ray_index + 1]
-         * along the "_light_forward" and "-_light_forward" directions.
+         * along the "_light_forward" and "- _light_forward" directions.
          */
         Debug.Assert((ray_index & 1) == 0);
         _view_rays[ray_index].world_forward = _light_forward;
@@ -372,6 +412,75 @@ public class SemiStaticLights : MonoBehaviour
         }
     }
 
+    static void SetTexSH(ComputeShader compute, int kernel, string basename, ShRGB tex_sh)
+    {
+        compute.SetTexture(kernel, basename + "_r", tex_sh.r);
+        compute.SetTexture(kernel, basename + "_g", tex_sh.g);
+        compute.SetTexture(kernel, basename + "_b", tex_sh.b);
+    }
+
+    static readonly float _Y0 = (float)(0.5 * Math.Sqrt(1.0 / Math.PI));
+    static readonly float _Y1 = (float)(0.5 * Math.Sqrt(3.0 / Math.PI));
+
+    static Vector4 ComputeYLM(Vector3 direction)
+    {
+        return new Vector4(
+            _Y0,
+            _Y1 * direction.y,
+            _Y1 * direction.z,
+            _Y1 * direction.x);
+    }
+
+    void EncodeResultIntoSH()
+    {
+        int clear_kernel = gvCompute.FindKernel("ClearSH");
+        _tex3d_sh.Create();
+        SetTexSH(gvCompute, clear_kernel, "FinalSH", _tex3d_sh);
+        int thread_groups = (gridResolution + 3) / 4;
+        int thread_groups_z = ((gridResolution * numCascades) + 3) / 4;
+        gvCompute.Dispatch(clear_kernel, thread_groups, thread_groups, thread_groups_z);
+
+        int encode_kernel = gvCompute.FindKernel("EncodeIntoSH");
+        SetTexSH(gvCompute, encode_kernel, "FinalSH", _tex3d_sh);
+
+        const int n_samples = 6;
+        float factor = (float)(4.0 * Math.PI / n_samples);
+
+        for (int i = 0; i < n_samples; i++)
+        {
+            Vector4 ylm = ComputeYLM(-_view_rays[i].world_forward);
+            Vector3 DZ = Vector3.zero;
+            DZ[i / 2] = (i & 1) == 0 ? -1f : 1f;
+
+            gvCompute.SetTexture(encode_kernel, "LightingTowerForward", _view_rays[i].lighting_tower);
+            gvCompute.SetVector("YlmScaled", ylm * factor);
+            gvCompute.SetInts("DZ", (int)DZ.x, (int)DZ.y, (int)DZ.z);
+            gvCompute.Dispatch(encode_kernel, thread_groups, thread_groups, thread_groups_z);
+        }
+
+        /* We want '_LPV_WorldToLightLocalMatrix * world_position' to be three coordinates
+         * between -0.5 and 0.5 if we're inside the level-0 cascade. */
+        float full_size = gridResolution * gridPixelSize;
+        Matrix4x4 mat = Matrix4x4.Scale(Vector3.one / full_size) * _world_to_light_local_matrix;
+        Shader.SetGlobalMatrix("_LPV_WorldToLightLocalMatrix", mat);
+
+        Shader.SetGlobalTexture("_SSL_FinalSH_r", _tex3d_sh.r);
+        Shader.SetGlobalTexture("_SSL_FinalSH_g", _tex3d_sh.g);
+        Shader.SetGlobalTexture("_SSL_FinalSH_b", _tex3d_sh.b);
+
+        /* 'in_cascade_max' is computed so that the formula from the shader gives
+         * 'cascade == 0' for all 'magnitude < 0.5 * (N-1)/N', where N = gridResolution:
+         *
+         *      cascade = floor(log2(max(magnitude * in_cascade_max, 1)))
+         *
+         * so we want to have '0.5 * (N-1)/N * in_cascade_max == 2'.
+         */
+        float in_cascade_max = 2f / (0.5f * (gridResolution - 1) / gridResolution);
+        float inv_num_cascades = 1f / numCascades;
+        Shader.SetGlobalVector("_SSL_CascadeStuff", new Vector2(in_cascade_max, inv_num_cascades));
+    }
+
+
     Camera FetchShadowCamera()
     {
         if (_shadowCam == null)
@@ -390,7 +499,7 @@ public class SemiStaticLights : MonoBehaviour
              *    a: depth, in [-0.5, 0.5] with 0.0 being at the camera position
              *              and larger values being farther from the light source
              */
-            _shadowCam.backgroundColor = new Color(0, 0, 0, 1);
+        _shadowCam.backgroundColor = new Color(0, 0, 0, 1);
             _shadowCam.aspect = 1;
             /* Obscure: if the main camera is stereo, then this one will be confused in
              * the SetTargetBuffers() mode unless we force it to not be stereo */

@@ -5,6 +5,8 @@
 #pragma kernel PropagateFromAmbient
 #pragma kernel PropagateFromUpperLevel
 #pragma kernel UnpackFromLightingTower
+#pragma kernel ClearSH
+#pragma kernel EncodeIntoSH
 
 /**********************************************************************************/
 
@@ -17,6 +19,8 @@ uint3 DX, DY, DZ;
 uint4 CascadeZIndex;
 RWTexture3D<float4> LightingTowerForward, LightingTowerBackward;
 float4 AmbientForward, AmbientBackward;
+RWTexture3D<float4> FinalSH_r, FinalSH_g, FinalSH_b;
+float4 YlmScaled;
 
 
 [numthreads(64, 1, 1)]
@@ -168,4 +172,21 @@ void UnpackFromLightingTower(uint3 id : SV_DispatchThreadID)
     RSM_gv[dst_index + 0] = color.r;
     RSM_gv[dst_index + 1] = color.g;
     RSM_gv[dst_index + 2] = color.b;
+}
+
+[numthreads(4, 4, 4)]
+void ClearSH(uint3 id : SV_DispatchThreadID)
+{
+    FinalSH_r[id] = 0;
+    FinalSH_g[id] = 0;
+    FinalSH_b[id] = 0;
+}
+
+[numthreads(4, 4, 4)]
+void EncodeIntoSH(uint3 id : SV_DispatchThreadID)
+{
+    float3 color = LightingTowerForward[id + DZ].rgb;
+    FinalSH_r[id] += YlmScaled * color.r;
+    FinalSH_g[id] += YlmScaled * color.g;
+    FinalSH_b[id] += YlmScaled * color.b;
 }
