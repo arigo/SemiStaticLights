@@ -5,8 +5,6 @@
 #pragma kernel PropagateFromAmbient
 #pragma kernel PropagateFromUpperLevel
 #pragma kernel UnpackFromLightingTower
-#pragma kernel ClearSH
-#pragma kernel EncodeIntoSH
 
 /**********************************************************************************/
 
@@ -16,11 +14,9 @@ RWTexture3D<float> LPV_gv;
 Texture3D<float> Input_gv, UpperLevelInput_gv;
 uint GridResolution;
 uint3 DX, DY, DZ;
-uint4 CascadeZIndex;
-RWTexture3D<float4> LightingTowerForward, LightingTowerBackward;
+uint4 CurrentCascadeIndex, UpperCascadeIndex;
+RWTexture3D<float4> LightingTower;
 float4 AmbientForward, AmbientBackward;
-RWTexture3D<float4> FinalSH_r, FinalSH_g, FinalSH_b;
-float4 YlmScaled;
 
 
 [numthreads(64, 1, 1)]
@@ -70,22 +66,22 @@ void PropagateFromAmbient(uint3 id : SV_DispatchThreadID)
 {
     /* propagate light from the ambient lighting into the highest-level cascade,
        along the two directions DZ and -DZ */
+    uint3 id2;
+    float3 color = AmbientForward.rgb;
+    float3 color2 = AmbientBackward.rgb;
+
     if (any(id < DZ))
     {
-        LightingTowerForward[id + uint3(0, 0, CascadeZIndex.w)] = float4(AmbientForward.rgb, Input_gv[id]);
-        uint3 id2 = id + DZ * (GridResolution - 1);
-        LightingTowerBackward[id2 + uint3(0, 0, CascadeZIndex.w)] = float4(AmbientBackward.rgb, Input_gv[id2]);
-        return;
+        id2 = id + DZ * (GridResolution - 1);
     }
-    uint3 id2 = id - DZ;
-
-    float3 color = AmbientForward.rgb;
-    color *= Input_gv[id2];
-    LightingTowerForward[id + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id]);
-
-    color = AmbientBackward.rgb;
-    color *= Input_gv[id];
-    LightingTowerBackward[id2 + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id2]);
+    else
+    {
+        id2 = id - DZ;
+        color *= Input_gv[id2];
+        color2 *= Input_gv[id];
+    }
+    LightingTower[id + CurrentCascadeIndex.xyz] = float4(color, Input_gv[id]);
+    LightingTower[id2 + CurrentCascadeIndex.wyz] = float4(color2, Input_gv[id2]);
 }
 
 float3 ApplyTransparency(float4 color)
@@ -93,7 +89,7 @@ float3 ApplyTransparency(float4 color)
     return color.rgb * color.a;
 }
 
-float3 FetchNextLightingTowerColor(int3 id, RWTexture3D<float4> lighting_tower)
+float3 FetchNextLightingTowerColor(int3 id, uint3 cascade_index)
 {
     /* manually interpolate.  Note that even if we could use automatic interpolation,
        it wouldn't quite work with the way we store data as RGB plus transparency,
@@ -114,27 +110,25 @@ float3 FetchNextLightingTowerColor(int3 id, RWTexture3D<float4> lighting_tower)
        This gives a non-trivial weighting average of 8 points.
      */
     float3 col;
-    float3 texel = (id + 0.5) * 0.5 + CascadeZIndex.xyz;
+    float3 texel = (id + 0.5) * 0.5 + cascade_index;
     int3 round_id = (uint3)texel;
 
-    /*int3 d = int3(round_id.x > texel.x ? 1 : -1,
+    int3 d = int3(round_id.x > texel.x ? 1 : -1,
                   round_id.y > texel.y ? 1 : -1,
                   round_id.z > texel.z ? 1 : -1);
-    d = int3(0, 0, 0);
 
-    col  = ApplyTransparency(lighting_tower[round_id]) * (0.75 * 0.75 * 0.75);
+    col  = ApplyTransparency(LightingTower[round_id]) * (0.75 * 0.75 * 0.75);
 
-    col += ApplyTransparency(lighting_tower[round_id + int3(d.x, 0, 0)]) * (0.25 * 0.75 * 0.75);
-    col += ApplyTransparency(lighting_tower[round_id + int3(0, d.y, 0)]) * (0.75 * 0.25 * 0.75);
-    col += ApplyTransparency(lighting_tower[round_id + int3(0, 0, d.z)]) * (0.75 * 0.75 * 0.25);
+    col += ApplyTransparency(LightingTower[round_id + int3(d.x, 0, 0)]) * (0.25 * 0.75 * 0.75);
+    col += ApplyTransparency(LightingTower[round_id + int3(0, d.y, 0)]) * (0.75 * 0.25 * 0.75);
+    col += ApplyTransparency(LightingTower[round_id + int3(0, 0, d.z)]) * (0.75 * 0.75 * 0.25);
 
-    col += ApplyTransparency(lighting_tower[round_id + int3(d.x, d.y, 0)]) * (0.25 * 0.25 * 0.75);
-    col += ApplyTransparency(lighting_tower[round_id + int3(d.x, 0, d.z)]) * (0.25 * 0.75 * 0.25);
-    col += ApplyTransparency(lighting_tower[round_id + int3(0, d.y, d.z)]) * (0.75 * 0.25 * 0.25);
+    col += ApplyTransparency(LightingTower[round_id + int3(d.x, d.y, 0)]) * (0.25 * 0.25 * 0.75);
+    col += ApplyTransparency(LightingTower[round_id + int3(d.x, 0, d.z)]) * (0.25 * 0.75 * 0.25);
+    col += ApplyTransparency(LightingTower[round_id + int3(0, d.y, d.z)]) * (0.75 * 0.25 * 0.25);
 
-    col += ApplyTransparency(lighting_tower[round_id + d]) * (0.25 * 0.25 * 0.25);*/
+    col += ApplyTransparency(LightingTower[round_id + d]) * (0.25 * 0.25 * 0.25);
     
-    col = ApplyTransparency(lighting_tower[round_id]);
     return col;
 }
 
@@ -143,50 +137,34 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
 {
     /* propagate light from a highest-level cascade into the next-lower-level cascade
        along the two directions DZ and -DZ */
+    uint3 id2;
+    float3 color, color2;
+
     if (any(id < DZ))
     {
-        float3 color = FetchNextLightingTowerColor(int3(id) - int3(DZ), LightingTowerForward);
-        LightingTowerForward[id + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id]);
-        uint3 id2 = id + DZ * (GridResolution - 1);
-        color = FetchNextLightingTowerColor(id2 + DZ, LightingTowerBackward);
-        LightingTowerBackward[id2 + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id2]);
-        return;
+        color = FetchNextLightingTowerColor(int3(id) - int3(DZ), UpperCascadeIndex.xyz);
+        id2 = id + DZ * (GridResolution - 1);
+        color2 = FetchNextLightingTowerColor(id2 + DZ, UpperCascadeIndex.wyz);
     }
-    uint3 id2 = id - DZ;
-
-    float3 color = FetchNextLightingTowerColor(int3(id2) - int3(DZ), LightingTowerForward);
-    color *= Input_gv[id2];
-    LightingTowerForward[id + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id]);
-
-    color = FetchNextLightingTowerColor(id + DZ, LightingTowerBackward);
-    color *= Input_gv[id];
-    LightingTowerBackward[id2 + uint3(0, 0, CascadeZIndex.w)] = float4(color, Input_gv[id2]);
+    else
+    {
+        id2 = id - DZ;
+        color = FetchNextLightingTowerColor(int3(id2)-int3(DZ), UpperCascadeIndex.xyz);
+        color *= Input_gv[id2];
+        color2 = FetchNextLightingTowerColor(id + DZ, UpperCascadeIndex.wyz);
+        color2 *= Input_gv[id];
+    }
+    LightingTower[id + CurrentCascadeIndex.xyz] = float4(color, Input_gv[id]);
+    LightingTower[id2 + CurrentCascadeIndex.wyz] = float4(color2, Input_gv[id2]);
 }
 
 [numthreads(4, 4, 4)]
 void UnpackFromLightingTower(uint3 id : SV_DispatchThreadID)
 {
     uint dst_index = (id.z * GridResolution + id.y) * GridResolution + id.x;
-    float3 color = LightingTowerForward[id + CascadeZIndex.xyz].rgb;
+    float3 color = LightingTower[id + CurrentCascadeIndex.xyz].rgb;
     dst_index *= 3;
     RSM_gv[dst_index + 0] = color.r;
     RSM_gv[dst_index + 1] = color.g;
     RSM_gv[dst_index + 2] = color.b;
-}
-
-[numthreads(4, 4, 4)]
-void ClearSH(uint3 id : SV_DispatchThreadID)
-{
-    FinalSH_r[id] = 0;
-    FinalSH_g[id] = 0;
-    FinalSH_b[id] = 0;
-}
-
-[numthreads(4, 4, 4)]
-void EncodeIntoSH(uint3 id : SV_DispatchThreadID)
-{
-    float3 color = LightingTowerForward[id + DZ].rgb;
-    FinalSH_r[id] += YlmScaled * color.r;
-    FinalSH_g[id] += YlmScaled * color.g;
-    FinalSH_b[id] += YlmScaled * color.b;
 }

@@ -115,15 +115,13 @@
             struct v2f
             {
                 float4 vertex : SV_POSITION;
-                float3 world_normal : TEXCOORD0;
-                float3 light_uvw : TEXCOORD1;
+                float3 light_uvw : TEXCOORD0;
+                nointerpolation float ray_index : TEXCOORD1;
             };
 
             float4x4 _LPV_WorldToLightLocalMatrix;
-            sampler3D _SSL_FinalSH_r;
-            sampler3D _SSL_FinalSH_g;
-            sampler3D _SSL_FinalSH_b;
-            float2 _SSL_CascadeStuff;
+            sampler3D _SSL_LightingTower;
+            float4 _SSL_CascadeStuff;
 
             v2f vert(appdata v)
             {
@@ -134,30 +132,30 @@
                 float4 lightlocal4 = mul(_LPV_WorldToLightLocalMatrix, world4);
                 o.light_uvw = lightlocal4.xyz / lightlocal4.w;
 
-                o.world_normal = normalize(mul((float3x3)unity_ObjectToWorld, v.normal));
+                float3 world_normal = mul((float3x3)unity_ObjectToWorld, v.normal);
+                float3 light_normal = mul((float3x3)_LPV_WorldToLightLocalMatrix, world_normal);
+                float3 test = abs(light_normal);
+                float cascade;
+                if (test.x >= max(test.y, test.z))
+                    cascade = light_normal.x < 0 ? 0 : 1;
+                else if (test.y >= max(test.x, test.z))
+                    cascade = light_normal.y < 0 ? 2 : 3;
+                else
+                    cascade = light_normal.z < 0 ? 4 : 5;
+                o.ray_index = cascade + 0.5;
 
                 return o;
             }
 
-            float4 compute_ylm(float3 direction)
-            {
-                const float PI = 3.141592653589793;
-                const float _Y0 = 0.5 * sqrt(1.0 / PI);
-                const float _Y1 = 0.5 * sqrt(3.0 / PI);
-                return float4(_Y0, _Y1 * direction.yzx);
-            }
-
             fixed4 frag(v2f i) : SV_Target
             {
-                float4 ylm = compute_ylm(i.world_normal);
-
                 /* 'uvw' is three coordinates between -0.5 and 0.5 if we're inside the level-0
-                   cascade.  The value of _SSL_CascadeStuff.x is computed by the C# code. */
+                   cascade.  The value of _SSL_CascadeStuff.w is computed by the C# code. */
                 float3 uvw = i.light_uvw;
 
                 float3 uvw_abs = abs(uvw);
                 float magnitude = max(max(uvw_abs.x, uvw_abs.y), uvw_abs.z);
-                float cascade = floor(log2(max(magnitude * _SSL_CascadeStuff.x, 1)));
+                float cascade = floor(log2(max(magnitude * _SSL_CascadeStuff.w, 1)));
                 /* ^^^ an integer at least 0 */
                 float inv_cascade_scale = exp2(-cascade);
                 uvw *= inv_cascade_scale;
@@ -166,15 +164,13 @@
                 //float3 light_normal = mul((float3x3)_LPV_WorldToLightLocalMatrix, i.world_normal);
                 //uvw += normalize(light_normal) / 16;
 
+                //uvw.y += 1 / 16.0;
 
-                uvw += float3(0.5, 0.5, 0.5 + cascade);
-                uvw.z *= _SSL_CascadeStuff.y;   /* 1 / numCascades */
 
-                float4 sh_r = tex3D(_SSL_FinalSH_r, uvw);
-                float4 sh_g = tex3D(_SSL_FinalSH_g, uvw);
-                float4 sh_b = tex3D(_SSL_FinalSH_b, uvw);
+                uvw += float3(i.ray_index, 0.5, 0.5 + cascade);
+                uvw *= _SSL_CascadeStuff.xyz;    /* 1/18, 1, 1/numCascades */
 
-                float3 light_color = float3(dot(sh_r, ylm), dot(sh_g, ylm), dot(sh_b, ylm));
+                float3 light_color = tex3D(_SSL_LightingTower, uvw).rgb;
                 light_color *= 3;
                 return float4(light_color, 1);
             }
