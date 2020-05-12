@@ -100,15 +100,15 @@ public class SemiStaticLights : MonoBehaviour
          */
         //RenderDirectLight();
 
-        /* Render the geometry voxels, the whole cascade.  This builds a cascade of 3D textures
-         * with each voxel being just an 'R8'.  The value is between 0.0 (opaque voxel) and 1.0
-         * (transparent voxel). */
-        RenderGV();
-
         lighting_tower.Create();
 
         for (int orientation = 0; orientation < 3; orientation++)
         {
+            /* Render the geometry voxels, the whole cascade.  This builds a cascade of 3D textures
+             * with each voxel being just an 'R8'.  The value is between 0.0 (opaque voxel) and 1.0
+             * (transparent voxel). */
+            RenderGV(orientation);
+
             /* Directionally copy the vertices to larger cascade levels.  This overwrites the
              * 1/8th central part of each 3D texture with voxels computed from the next smaller
              * level.  The computation is done directionally, according to the orientation.
@@ -221,7 +221,7 @@ public class SemiStaticLights : MonoBehaviour
         return tg;
     }
 
-    void RenderGV()
+    void RenderGV(int orientation)
     {
         var cam = FetchShadowCamera();
 
@@ -254,6 +254,8 @@ public class SemiStaticLights : MonoBehaviour
 
             RenderTexture rt_temp = RenderTexture.GetTemporary(gridResolution, gridResolution, 0,
                                                                RenderTextureFormat.R8);
+            rt_temp.filterMode = FilterMode.Point;
+            rt_temp.wrapMode = TextureWrapMode.Clamp;
 
             cam.orthographicSize = half_size;
             cam.nearClipPlane = -half_size;
@@ -267,25 +269,32 @@ public class SemiStaticLights : MonoBehaviour
             var axis_x = cam.transform.right;
             var axis_y = cam.transform.up;
             var axis_z = cam.transform.forward;
-            //cam.transform.position -= 0.5f * pixel_size * (axis_x + axis_y + axis_z);
-            cam.RenderWithShader(gvShader, "RenderType");
-            cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
-
-            cam.transform.Rotate(axis_y, -90, Space.World);
-            cam.transform.Rotate(axis_z, -90, Space.World);
-            //cam.transform.position -= 0.5f * pixel_size * (axis_z + axis_x + axis_y);
-            Shader.EnableKeyword("ORIENTATION_2");
-            cam.RenderWithShader(gvShader, "RenderType");
-            Shader.DisableKeyword("ORIENTATION_2");
-            cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
-
-            cam.transform.Rotate(axis_z, 90, Space.World);
-            cam.transform.Rotate(axis_y, 90, Space.World);
-            //cam.transform.position -= 0.5f * pixel_size * (axis_y + axis_z + axis_x);
-            Shader.EnableKeyword("ORIENTATION_3");
-            cam.RenderWithShader(gvShader, "RenderType");
-            Shader.DisableKeyword("ORIENTATION_3");
-            cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
+            if (orientation == 2)
+            {
+                //cam.transform.position -= 0.5f * pixel_size * (axis_x + axis_y + axis_z);
+                cam.RenderWithShader(gvShader, "RenderType");
+                cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
+            }
+            if (orientation == 1)
+            {
+                cam.transform.Rotate(axis_y, -90, Space.World);
+                cam.transform.Rotate(axis_z, -90, Space.World);
+                //cam.transform.position -= 0.5f * pixel_size * (axis_z + axis_x + axis_y);
+                Shader.EnableKeyword("ORIENTATION_2");
+                cam.RenderWithShader(gvShader, "RenderType");
+                Shader.DisableKeyword("ORIENTATION_2");
+                cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
+            }
+            if (orientation == 0)
+            {
+                cam.transform.Rotate(axis_z, 90, Space.World);
+                cam.transform.Rotate(axis_y, 90, Space.World);
+                //cam.transform.position -= 0.5f * pixel_size * (axis_y + axis_z + axis_x);
+                Shader.EnableKeyword("ORIENTATION_3");
+                cam.RenderWithShader(gvShader, "RenderType");
+                Shader.DisableKeyword("ORIENTATION_3");
+                cam.transform.SetPositionAndRotation(orig_position, orig_rotation);
+            }
 
             cam.targetTexture = null;
             RenderTexture.ReleaseTemporary(rt_temp);
@@ -324,7 +333,7 @@ public class SemiStaticLights : MonoBehaviour
             gvCompute.SetTexture(directional_copy_kernel, "Input_gv", _tex3d_gvs[i - 1]);
             gvCompute.SetTexture(directional_copy_kernel, "LPV_gv", _tex3d_gvs[i]);
             int thread_groups = (gridResolution + 7) / 8;
-            gvCompute.Dispatch(directional_copy_kernel, thread_groups, thread_groups, thread_groups);
+            //gvCompute.Dispatch(directional_copy_kernel, thread_groups, thread_groups, thread_groups);
         }
     }
 
@@ -456,6 +465,8 @@ public class SemiStaticLights : MonoBehaviour
             1f,
             1f / numCascades,
             in_cascade_max));
+
+        Shader.SetGlobalFloat("_SSL_GridResolutionExtra", 1.5f / gridResolution);
     }
 
 
@@ -635,7 +646,9 @@ public class SemiStaticLights : MonoBehaviour
         });
         foreach (var g in gizmos)
         {
-            Gizmos.color = g.Item2 * 1.8f;
+            //Gizmos.color = g.Item2 * 1.8f;
+            //Gizmos.DrawCube(g.Item1, Vector3.one * 0.2f);
+            Gizmos.color = g.Item2 * 6f;
             Gizmos.DrawCube(g.Item1, Vector3.one * 0.2f);
         }
     }

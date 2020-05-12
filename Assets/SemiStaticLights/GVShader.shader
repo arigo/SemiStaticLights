@@ -29,7 +29,7 @@
             struct appdata
             {
                 float4 vertex : POSITION;
-                float3 normal : NORMAL;
+                //float3 normal : NORMAL;
             };
 
             struct v2f
@@ -39,7 +39,7 @@
                    where it is only partially covered.  This seems to remove the out-of-bounds
                    values causing random voxels to be marked. */
                 centroid float4 vertex : SV_POSITION;
-                centroid float3 world_normal : TEXCOORD0;
+                //centroid float3 world_normal : TEXCOORD0;
             };
 
             RWStructuredBuffer<float> _RSM_gv : register(u1);
@@ -51,7 +51,7 @@
             {
                 v2f o;
                 o.vertex = UnityObjectToClipPos(v.vertex);
-                o.world_normal = UnityObjectToWorldNormal(v.normal);
+                //o.world_normal = UnityObjectToWorldNormal(v.normal);
                 return o;
             }
 
@@ -65,17 +65,14 @@
 
                 int3 pos = int3(xyz);
 
-                float3 normal = i.world_normal;
-                normal = normalize(mul((float3x3)_LPV_WorldToLightLocalMatrix, normal));
-                float reduce = normal.z;
+                //float3 normal = i.world_normal;
+                //normal = normalize(mul((float3x3)_LPV_WorldToLightLocalMatrix, normal));
 
 #ifdef ORIENTATION_2
                 pos = pos.yzx;
-                reduce = normal.y;
 #endif
 #ifdef ORIENTATION_3
                 pos = pos.zxy;
-                reduce = normal.x;
 #endif
 
                 int index = pos.x + _LPV_GridResolution * (pos.y + _LPV_GridResolution * pos.z);

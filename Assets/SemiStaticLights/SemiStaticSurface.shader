@@ -105,6 +105,7 @@
             #include "UnityCG.cginc"
             #pragma vertex vert
             #pragma fragment frag
+#include "Assets/ShaderDebugger/debugger.cginc"
 
             struct appdata
             {
@@ -116,12 +117,14 @@
             {
                 float4 vertex : SV_POSITION;
                 float3 light_uvw : TEXCOORD0;
-                nointerpolation float ray_index : TEXCOORD1;
+                float3 light_normal : TEXCOORD1;
+                nointerpolation int ray_index : TEXCOORD2;
             };
 
             float4x4 _LPV_WorldToLightLocalMatrix;
             sampler3D _SSL_LightingTower;
             float4 _SSL_CascadeStuff;
+            float _SSL_GridResolutionExtra;
 
             v2f vert(appdata v)
             {
@@ -134,6 +137,8 @@
 
                 float3 world_normal = mul((float3x3)unity_ObjectToWorld, v.normal);
                 float3 light_normal = mul((float3x3)_LPV_WorldToLightLocalMatrix, world_normal);
+                o.light_normal = light_normal;
+
                 float3 test = abs(light_normal);
                 float cascade;
                 if (test.x >= max(test.y, test.z))
@@ -142,7 +147,7 @@
                     cascade = light_normal.y < 0 ? 2 : 3;
                 else
                     cascade = light_normal.z < 0 ? 4 : 5;
-                o.ray_index = cascade + 0.5;
+                o.ray_index = cascade;
 
                 return o;
             }
@@ -161,13 +166,22 @@
                 uvw *= inv_cascade_scale;
 
 
-                //float3 light_normal = mul((float3x3)_LPV_WorldToLightLocalMatrix, i.world_normal);
-                //uvw += normalize(light_normal) / 16;
+                //uvw += normalize(i.light_normal) / 16;
+                switch (i.ray_index)
+                {
+                case 0: uvw.x -= _SSL_GridResolutionExtra; break;
+                case 1: uvw.x += _SSL_GridResolutionExtra; break;
+                case 2: uvw.y -= _SSL_GridResolutionExtra; break;
+                case 3: uvw.y += _SSL_GridResolutionExtra; break;
+                case 4: uvw.z -= _SSL_GridResolutionExtra; break;
+                case 5: uvw.z += _SSL_GridResolutionExtra; break;
+                }
 
-                //uvw.y += 1 / 16.0;
+                uint root = DebugFragment(i.vertex);
+                DbgValue1(root, cascade);
 
 
-                uvw += float3(i.ray_index, 0.5, 0.5 + cascade);
+                uvw += float3(0.5 + i.ray_index, 0.5, 0.5 + cascade);
                 uvw *= _SSL_CascadeStuff.xyz;    /* 1/18, 1, 1/numCascades */
 
                 float3 light_color = tex3D(_SSL_LightingTower, uvw).rgb;
