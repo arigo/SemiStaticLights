@@ -68,7 +68,7 @@ float3 FetchBiggerLightCell(int3 id, uint3 cascade_index)
         return Ambients[cascade_index.x].rgb;
     }
 
-    /* dot(id, DZ) is an odd integer here (possibly equal to -1).
+    /* dot(id, DZ) is an odd integer here (>= -1).
        'texel' is a float3 where the DZ component has got a fraction 0.25, and the other two are
        each either 0.25 or 0.75.
     */
@@ -151,39 +151,30 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
     uint idz = dot(id, DZ);
     float alpha;
     float3 bigger;
+    uint3 id2, id3;
 
     /* ---- forward pass ---- */
 
     if (idz < 2)
     {
-        if (idz == 1)
-        {
-            alpha = Input_gv[id - DZ];
-            bigger = FetchBiggerLightCell(id, UpperCascadeIndex.xyz);
-        }
-        else
-        {
-            alpha = 1;
-            bigger = FetchBiggerLightCell(id + DZ, UpperCascadeIndex.xyz);
-        }
+        id2 = id + DZ;
+        id3 = id;
+        alpha = 1;
     }
     else
     {
-        uint3 id2 = id - DZ;
-        uint3 id3 = id2 - DZ;
+        id2 = id - DZ;
+        id3 = id2 - DZ;
         alpha = Input_gv[id3] * Input_gv[id2];
-
-
-        if (idz & 1)    /* first case above */
-        {
-            uint3 id4 = id3 - DZ;
-            alpha *= Input_gv[id4];
-            bigger = FetchBiggerLightCell(id3, UpperCascadeIndex.xyz);
-        }
-        else    /* second case above */
-        {
-            bigger = FetchBiggerLightCell(id2, UpperCascadeIndex.xyz);
-        }
+    }
+    if (idz & 1)    /* first case above */
+    {
+        alpha *= Input_gv[id3 - DZ];
+        bigger = FetchBiggerLightCell(id3, UpperCascadeIndex.xyz);
+    }
+    else    /* second case above */
+    {
+        bigger = FetchBiggerLightCell(id2, UpperCascadeIndex.xyz);
     }
     LightingTower[id + CurrentCascadeIndex.xyz] = bigger * alpha;
 
@@ -191,34 +182,25 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
 
     if (idz >= GridResolution - 2)
     {
-        if (idz == GridResolution - 2)
-        {
-            alpha = Input_gv[id + DZ];
-            bigger = FetchBiggerLightCell(id + DZ, UpperCascadeIndex.wyz);
-        }
-        else
-        {
-            alpha = 1;
-            bigger = FetchBiggerLightCell(id, UpperCascadeIndex.wyz);
-        }
+        id2 = id - DZ;
+        id3 = id;
+        alpha = 1;
     }
     else
     {
-        uint3 id2 = id + DZ;
-        uint3 id3 = id2 + DZ;
+        id2 = id + DZ;
+        id3 = id2 + DZ;
         alpha = Input_gv[id3] * Input_gv[id2];
-
-
-        if (!(idz & 1))    /* first case above */
-        {
-            uint3 id4 = id3 + DZ;
-            alpha *= Input_gv[id4];
-            bigger = FetchBiggerLightCell(id4, UpperCascadeIndex.wyz);
-        }
-        else    /* second case above */
-        {
-            bigger = FetchBiggerLightCell(id3, UpperCascadeIndex.wyz);
-        }
+    }
+    if (!(idz & 1))    /* first case above */
+    {
+        uint3 id4 = id3 + DZ;
+        alpha *= Input_gv[id4];
+        bigger = FetchBiggerLightCell(id4, UpperCascadeIndex.wyz);
+    }
+    else    /* second case above */
+    {
+        bigger = FetchBiggerLightCell(id3, UpperCascadeIndex.wyz);
     }
     LightingTower[id + CurrentCascadeIndex.wyz] = bigger * alpha;
 }
