@@ -208,7 +208,7 @@ public class SemiStaticLights : MonoBehaviour
     RenderTexture CreateLightingTower()
     {
         var desc = new RenderTextureDescriptor(gridResolution * _view_rays.Length, gridResolution,
-                                               RenderTextureFormat.ARGB32);
+                                               RenderTextureFormat.ARGB2101010);
         desc.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
         desc.volumeDepth = gridResolution * numCascades;
         desc.enableRandomWrite = true;
@@ -360,33 +360,27 @@ public class SemiStaticLights : MonoBehaviour
         SetAmbientProbe();
 
         int thread_groups = (gridResolution + 3) / 4;
-        int propagate_kernel = gvCompute.FindKernel("PropagateFromAmbient");
-        gvCompute.SetTexture(propagate_kernel, "Input_gv", _tex3d_gvs[numCascades - 1]);
-        gvCompute.SetTexture(propagate_kernel, "LightingTower", lighting_tower);
-        gvCompute.SetInts("CurrentCascadeIndex",
-            ray_index * gridResolution,
-            0,
-            (numCascades - 1) * gridResolution,
-            (ray_index + 1) * gridResolution);
-        gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
-
-        propagate_kernel = gvCompute.FindKernel("PropagateFromUpperLevel");
+        int propagate_kernel = gvCompute.FindKernel("PropagateFromUpperLevel");
         gvCompute.SetTexture(propagate_kernel, "LightingTower", lighting_tower);
 
-        for (int i = numCascades - 2; i >= 0; --i)
+        for (int i = numCascades - 1; i >= 0; --i)
         {
             gvCompute.SetTexture(propagate_kernel, "Input_gv", _tex3d_gvs[i]);
-            gvCompute.SetTexture(propagate_kernel, "UpperLevelInput_gv", _tex3d_gvs[i + 1]);
             gvCompute.SetInts("CurrentCascadeIndex",
                 ray_index * gridResolution,
                 0,
                 i * gridResolution,
                 (ray_index + 1) * gridResolution);
-            gvCompute.SetInts("UpperCascadeIndex",
-                (gridResolution >> 2) + ray_index * gridResolution,
-                (gridResolution >> 2),
-                (gridResolution >> 2) + (i + 1) * gridResolution,
-                (gridResolution >> 2) + (ray_index + 1) * gridResolution);
+
+            if (i < numCascades - 1)
+                gvCompute.SetInts("UpperCascadeIndex",
+                    (gridResolution >> 2) + ray_index * gridResolution,
+                    (gridResolution >> 2),
+                    (gridResolution >> 2) + (i + 1) * gridResolution,
+                    (gridResolution >> 2) + (ray_index + 1) * gridResolution);
+            else
+                gvCompute.SetInts("UpperCascadeIndex", 0, 0, 0, 0);
+
             gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
         }
     }
@@ -648,7 +642,7 @@ public class SemiStaticLights : MonoBehaviour
         {
             //Gizmos.color = g.Item2 * 1.8f;
             //Gizmos.DrawCube(g.Item1, Vector3.one * 0.2f);
-            Gizmos.color = g.Item2 * 6f;
+            Gizmos.color = g.Item2 * 3f;
             Gizmos.DrawCube(g.Item1, Vector3.one * 0.2f);
         }
     }
