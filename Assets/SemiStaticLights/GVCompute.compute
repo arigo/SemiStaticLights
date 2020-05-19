@@ -15,7 +15,7 @@ uint GridResolution;
 uint3 DX, DY, DZ;
 uint4 CurrentCascadeIndex, UpperCascadeIndex;
 RWTexture3D<float3> LightingTower;
-float4 AmbientForward, AmbientBackward;
+float4 Ambients[2];
 
 
 [numthreads(64, 1, 1)]
@@ -60,88 +60,13 @@ void DirectionalCopy(uint3 id : SV_DispatchThreadID)
     LPV_gv[dst_id] = dot(transparency1, transparency2) * 0.25;
 }
 
-#if 0
-[numthreads(4, 4, 4)]
-void PropagateFromAmbient(uint3 id : SV_DispatchThreadID)
-{
-    /* propagate light from the ambient lighting into the highest-level cascade,
-       along the two directions DZ and -DZ */
-    uint3 id2;
-    float3 color = AmbientForward.rgb;
-    float3 color2 = AmbientBackward.rgb;
-
-    if (any(id < DZ))
-    {
-        id2 = id + DZ * (GridResolution - 1);
-    }
-    else
-    {
-        id2 = id - DZ;
-        color *= Input_gv[id2];
-        color2 *= Input_gv[id];
-    }
-    LightingTower[id + CurrentCascadeIndex.xyz] = float4(color, Input_gv[id]);
-    LightingTower[id2 + CurrentCascadeIndex.wyz] = float4(color2, Input_gv[id2]);
-}
-
-float3 ApplyTransparency(float4 color)
-{
-    return color.rgb * color.a;
-}
-
-float3 FetchNextLightingTowerColor(int3 id, uint3 cascade_index)
-{
-    /* manually interpolate.  Note that even if we could use automatic interpolation,
-       it wouldn't quite work with the way we store data as RGB plus transparency,
-       because RGB is not alpha-premultiplied.  That's why we need to call
-       ApplyTransparency() on all source pixels, not on the final mean value.
-       This is needed because in the end we are interested in the RGB value on actual
-       triangles, where the alpha is typically 0.
-
-       'id' is three integers normally between 0 and GridResolution - 1 (they can be
-       out of bounds a little bit), in the current cascade.  We must transform them
-       to coordinates in the next bigger cascade.  This is essentially divided by two
-       plus a quarter of GridResolution.  But we need to be more careful than that in
-       order to do the interpolation right.  The center of the texel in the current
-       cascade is at "id + float3(0.5)".  In the next bigger cascade coordinates, the
-       same point is at "(id + float3(0.5)) / 2 + quarter".  It's a float3 whose
-       fractional part is 0.25 or 0.75 (for each of x, y, z).  We can sample the
-       bigger texture at any float3 whose fractional part is 0.5 (for each of x, y, z).
-       This gives a non-trivial weighting average of 8 points.
-     */
-    float3 col;
-    float3 texel = (id + 0.5) * 0.5 + cascade_index;
-    int3 round_id = (uint3)texel;
-
-    int3 d = int3(round_id.x > texel.x ? 1 : -1,
-                  round_id.y > texel.y ? 1 : -1,
-                  round_id.z > texel.z ? 1 : -1);
-
-    col  = ApplyTransparency(LightingTower[round_id]) * (0.75 * 0.75 * 0.75);
-
-    col += ApplyTransparency(LightingTower[round_id + int3(d.x, 0, 0)]) * (0.25 * 0.75 * 0.75);
-    col += ApplyTransparency(LightingTower[round_id + int3(0, d.y, 0)]) * (0.75 * 0.25 * 0.75);
-    col += ApplyTransparency(LightingTower[round_id + int3(0, 0, d.z)]) * (0.75 * 0.75 * 0.25);
-
-    col += ApplyTransparency(LightingTower[round_id + int3(d.x, d.y, 0)]) * (0.25 * 0.25 * 0.75);
-    col += ApplyTransparency(LightingTower[round_id + int3(d.x, 0, d.z)]) * (0.25 * 0.75 * 0.25);
-    col += ApplyTransparency(LightingTower[round_id + int3(0, d.y, d.z)]) * (0.75 * 0.25 * 0.25);
-
-    col += ApplyTransparency(LightingTower[round_id + d]) * (0.25 * 0.25 * 0.25);
-    
-    return col;
-}
-#endif
-
 float3 FetchBiggerLightCell(int3 id, uint3 cascade_index)
 {
     if (cascade_index.y == 0)
     {
-        /* last-level cascade */
-        return AmbientForward.rgb;
+        /* last-level cascade: no higher level, use ambient light */
+        return Ambients[cascade_index.x].rgb;
     }
-
-
 
     /* dot(id, DZ) is an odd integer here (possibly equal to -1).
        'texel' is a float3 where the DZ component has got a fraction 0.25, and the other two are
@@ -155,17 +80,8 @@ float3 FetchBiggerLightCell(int3 id, uint3 cascade_index)
     float3 col10 = LightingTower[round_id + DY];
     float3 col11 = LightingTower[round_id + DX + DY];
 
-    /*if (CurrentCascadeIndex.z == 16 * 6 && id.x == 8 && id.y == 5 && id.z == 4 &&
-        //(round_id + DX + DY ).x == 8 &&
-        //(round_id + DX + DY ).y == 7 &&
-        //(round_id + DX + DY ).z == 7 + 7*16 &&
-        1)
-    {
-        //return float3(1, 0, 0);
-    }*/
-
-    /* If lastbit_dx == 0, we keep col00&col10 with a factor 0.75, and col01&col11 with a
-       factor 0.25.  If lastbit_dx == 1, it's the opposite. */
+    /* If frac(texel_dx) == 0.25, we keep col00&col10 with a factor 0.75, and col01&col11 with a
+       factor 0.25.  If frac(texel_dx) == 0.75, it's the opposite. */
     float f = dot(texel - round_id, DX);
     col00 *= 1 - f;
     col01 *= f;
@@ -187,9 +103,6 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
 {
     /* propagate light from a highest-level cascade into the next-lower-level cascade
        along the two directions DZ and -DZ */
-    /*uint3 id2;
-    float3 color, color2;*/
-
 
 
         /*        -->>> DZ = direction of light propagation -->>>
@@ -239,6 +152,8 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
     float alpha;
     float3 bigger;
 
+    /* ---- forward pass ---- */
+
     if (idz < 2)
     {
         if (idz == 1)
@@ -270,17 +185,42 @@ void PropagateFromUpperLevel(uint3 id : SV_DispatchThreadID)
             bigger = FetchBiggerLightCell(id2, UpperCascadeIndex.xyz);
         }
     }
-    /*if ((id + CurrentCascadeIndex.xyz).x == 8 &&
-        (id + CurrentCascadeIndex.xyz).y == 7 &&
-        (id + CurrentCascadeIndex.xyz).z == 7 + 7 * 16 &&
-        1)
-    {
-        bigger = float3(1, 0, 0);
-        alpha = 1;
-    }*/
     LightingTower[id + CurrentCascadeIndex.xyz] = bigger * alpha;
 
-    //LightingTower[id2 + CurrentCascadeIndex.wyz] = float4(color2, Input_gv[id2]);
+    /* ---- backward pass ---- */
+
+    if (idz >= GridResolution - 2)
+    {
+        if (idz == GridResolution - 2)
+        {
+            alpha = Input_gv[id + DZ];
+            bigger = FetchBiggerLightCell(id + DZ, UpperCascadeIndex.wyz);
+        }
+        else
+        {
+            alpha = 1;
+            bigger = FetchBiggerLightCell(id, UpperCascadeIndex.wyz);
+        }
+    }
+    else
+    {
+        uint3 id2 = id + DZ;
+        uint3 id3 = id2 + DZ;
+        alpha = Input_gv[id3] * Input_gv[id2];
+
+
+        if (!(idz & 1))    /* first case above */
+        {
+            uint3 id4 = id3 + DZ;
+            alpha *= Input_gv[id4];
+            bigger = FetchBiggerLightCell(id4, UpperCascadeIndex.wyz);
+        }
+        else    /* second case above */
+        {
+            bigger = FetchBiggerLightCell(id3, UpperCascadeIndex.wyz);
+        }
+    }
+    LightingTower[id + CurrentCascadeIndex.wyz] = bigger * alpha;
 }
 
 [numthreads(4, 4, 4)]

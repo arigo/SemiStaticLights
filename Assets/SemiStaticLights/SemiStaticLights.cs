@@ -341,8 +341,7 @@ public class SemiStaticLights : MonoBehaviour
     {
         Color[] results = new Color[2];
         RenderSettings.ambientProbe.Evaluate(new Vector3[] { -_light_forward, _light_forward }, results);
-        gvCompute.SetVector("AmbientForward", results[0]);
-        gvCompute.SetVector("AmbientBackward", results[1]);
+        gvCompute.SetVectorArray("Ambients", new Vector4[] { results[0], results[1] });
     }
 
     void PropagateLight(int ray_index)
@@ -379,7 +378,7 @@ public class SemiStaticLights : MonoBehaviour
                     (gridResolution >> 2) + (i + 1) * gridResolution,
                     (gridResolution >> 2) + (ray_index + 1) * gridResolution);
             else
-                gvCompute.SetInts("UpperCascadeIndex", 0, 0, 0, 0);
+                gvCompute.SetInts("UpperCascadeIndex", 0, 0, 0, 1);
 
             gvCompute.Dispatch(propagate_kernel, thread_groups, thread_groups, thread_groups);
         }
@@ -453,7 +452,7 @@ public class SemiStaticLights : MonoBehaviour
          *
          * so we want to have '0.5 * (N-1)/N * in_cascade_max == 2'.
          */
-        float in_cascade_max = 2f / (0.5f * (gridResolution - 1) / gridResolution);
+        float in_cascade_max = 2f / (0.5f * (gridResolution - 1f) / gridResolution);
         Shader.SetGlobalVector("_SSL_CascadeStuff", new Vector4(
             1f / 18f,
             1f,

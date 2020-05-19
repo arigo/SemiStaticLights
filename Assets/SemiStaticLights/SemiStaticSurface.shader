@@ -160,14 +160,14 @@
 
                 float3 uvw_abs = abs(uvw);
                 float magnitude = max(max(uvw_abs.x, uvw_abs.y), uvw_abs.z);
-                float cascade = floor(log2(max(magnitude * _SSL_CascadeStuff.w, 1)));
+                float cascade = floor(log2(max(magnitude * /*_SSL_CascadeStuff.w*/ 4.5, 1)));
                 /* ^^^ an integer at least 0 */
                 float inv_cascade_scale = exp2(-cascade);
                 uvw *= inv_cascade_scale;
 
 
-                //uvw += normalize(i.light_normal) / 16;
-                switch (i.ray_index)
+                uvw += normalize(i.light_normal) / 16;
+                /*switch (i.ray_index)
                 {
                 case 0: uvw.x -= _SSL_GridResolutionExtra; break;
                 case 1: uvw.x += _SSL_GridResolutionExtra; break;
@@ -175,7 +175,7 @@
                 case 3: uvw.y += _SSL_GridResolutionExtra; break;
                 case 4: uvw.z -= _SSL_GridResolutionExtra; break;
                 case 5: uvw.z += _SSL_GridResolutionExtra; break;
-                }
+                }*/
 
                 uint root = DebugFragment(i.vertex);
                 DbgValue1(root, cascade);

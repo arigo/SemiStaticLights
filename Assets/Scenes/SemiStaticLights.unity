@@ -153,7 +153,7 @@ MonoBehaviour:
   cullingMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  gridResolution: 16
+  gridResolution: 32
   gridPixelSize: 0.03125
   numCascades: 8
   gvShader: {fileID: 4800000, guid: afebd8fbdfed26e4a9fcd86807a18b5f, type: 3}
@@ -161,8 +161,8 @@ MonoBehaviour:
   directLightShader: {fileID: 4800000, guid: ba83b898e207e5a4580f903fc9e533fa, type: 3}
   drawGizmosGV: 0
   drawGizmosLT: 0
-  drawCascadeLevel: 6
-  drawLightingViewRay: 0
+  drawCascadeLevel: 3
+  drawLightingViewRay: 4
 --- !u!4 &902605891
 Transform:
   m_ObjectHideFlags: 0
